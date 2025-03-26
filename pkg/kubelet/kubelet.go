@@ -851,6 +851,7 @@ func NewMainKubelet(kubeCfg *kubeletconfiginternal.KubeletConfiguration,
 	// Generating the status funcs should be the last thing we do,
 	// since this relies on the rest of the Kubelet having been constructed.
 	klet.setNodeStatusFuncs = klet.defaultNodeStatusFuncs()
+	klet.PodMapping = make(map[types.UID]types.UID)
 
 	return klet, nil
 }
@@ -1183,6 +1184,9 @@ type Kubelet struct {
 
 	// Manage user namespaces
 	usernsManager *usernsManager
+
+	// PodMapping
+	PodMapping map[types.UID]types.UID
 }
 
 // ListPodStats is delegated to StatsProvider, which implements stats.Provider interface
@@ -1741,6 +1745,18 @@ func (kl *Kubelet) syncPod(ctx context.Context, updateType kubetypes.SyncPodType
 
 	// Call the container runtime's SyncPod callback
 	result := kl.containerRuntime.SyncPod(pod, podStatus, pullSecrets, kl.backOff)
+	if namens, ok := pod.Annotations["pod.openeuler.org/handed-from"]; ok {
+		splitted := strings.Split(namens, "/")
+		name, ns := splitted[0], splitted[1]
+		orgPod, exist := kl.podManager.GetPodByName(ns, name)
+		if exist {
+			kl.PodMapping[orgPod.UID] = pod.UID
+			klog.V(4).InfoS("SyncPod: Pod handed from", "pod", klog.KObj(orgPod), "podUID", orgPod.UID, "to", klog.KObj(pod), "podUID", pod.UID, "author", "wyh")
+		} else {
+			klog.V(4).InfoS("SyncPod: orgPod not exist", "author", "wyh")
+
+		}
+	}
 	kl.reasonCache.Update(pod.UID, result)
 	if err := result.Error(); err != nil {
 		// Do not return error if the only failures were pods in backoff
@@ -1868,6 +1884,31 @@ func (kl *Kubelet) syncTerminatedPod(ctx context.Context, pod *v1.Pod, podStatus
 	apiPodStatus := kl.generateAPIPodStatus(pod, podStatus)
 	kl.statusManager.SetPodStatus(pod, apiPodStatus)
 
+	// if namens, ok := pod.Annotations["pod.openeuler.org/handed-to"]; ok {
+	// 	splitted := strings.Split(namens, "/")
+	// 	name, ns := splitted[0], splitted[1]
+	// 	klog.InfoS("syncTerminatedPod: This pod is handed to another pod", "current pod", pod.Name+pod.Namespace, "handed-to", name+ns)
+	// 	handedToPod, exist := kl.podManager.GetPodByName(name, ns)
+	// 	if exist {
+	// 		klog.InfoS("The handed-to pod exists, skip syncTerminatedPod", "pod", klog.KObj(handedToPod))
+	// 		kl.statusManager.TerminatePod(pod)
+	// 		klog.V(4).InfoS("Pod is terminated and will need no more status updates", "pod", klog.KObj(pod), "podUID", pod.UID)
+
+	// 		return nil
+	// 	} else {
+	// 		klog.InfoS("The handed-to pod not exists", "pod", klog.KObj(handedToPod))
+	// 	}
+	// }
+
+	if _, ok := pod.Annotations["pod.openeuler.org/handed-from"]; ok {
+		for orgUID, handedUID := range kl.PodMapping {
+			if handedUID == pod.UID {
+				delete(kl.PodMapping, orgUID)
+				klog.V(4).InfoS("syncTerminatedPod: delete orgPod UID entry", "orgPodUID", orgUID, "handedPodUID", handedUID, "author", "wyh")
+			}
+		}
+	}
+
 	// volumes are unmounted after the pod worker reports ShouldPodRuntimeBeRemoved (which is satisfied
 	// before syncTerminatedPod is invoked)
 	if err := kl.volumeManager.WaitForUnmount(pod); err != nil {
@@ -1889,12 +1930,16 @@ func (kl *Kubelet) syncTerminatedPod(ctx context.Context, pod *v1.Pod, podStatus
 
 	// remove any cgroups in the hierarchy for pods that are no longer running.
 	if kl.cgroupsPerQOS {
-		pcm := kl.containerManager.NewPodContainerManager()
-		name, _ := pcm.GetPodContainerName(pod)
-		if err := pcm.Destroy(name); err != nil {
-			return err
+		if _, ok := kl.PodMapping[pod.UID]; ok {
+			klog.V(3).InfoS("syncTerminatedPod: pod is still remapping, skipping delete cgroup", "podUID", pod.UID, "author", "wyh")
+		} else {
+			pcm := kl.containerManager.NewPodContainerManager()
+			name, _ := pcm.GetPodContainerName(pod)
+			if err := pcm.Destroy(name); err != nil {
+				return err
+			}
+			klog.V(4).InfoS("Pod termination removed cgroups", "pod", klog.KObj(pod), "podUID", pod.UID)
 		}
-		klog.V(4).InfoS("Pod termination removed cgroups", "pod", klog.KObj(pod), "podUID", pod.UID)
 	}
 
 	kl.usernsManager.Release(pod.UID)

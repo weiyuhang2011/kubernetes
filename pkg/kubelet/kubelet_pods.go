@@ -950,10 +950,14 @@ func (kl *Kubelet) PodResourcesAreReclaimed(pod *v1.Pod, status v1.PodStatus) bo
 		return false
 	}
 	if kl.kubeletConfiguration.CgroupsPerQOS {
-		pcm := kl.containerManager.NewPodContainerManager()
-		if pcm.Exists(pod) {
-			klog.V(3).InfoS("Pod is terminated, but pod cgroup sandbox has not been cleaned up", "pod", klog.KObj(pod))
-			return false
+		if _, ok := kl.PodMapping[pod.UID]; !ok {
+			pcm := kl.containerManager.NewPodContainerManager()
+			if pcm.Exists(pod) {
+				klog.V(3).InfoS("Pod is terminated, but pod cgroup sandbox has not been cleaned up", "pod", klog.KObj(pod))
+				return false
+			}
+		} else {
+			klog.V(3).InfoS("PodResourcesAreReclaimed: pod is remapping, skip checking cgroup clean state", "pod", klog.KObj(pod), "authod", "wyh")
 		}
 	}
 
@@ -1967,6 +1971,10 @@ func (kl *Kubelet) cleanupOrphanedPodCgroups(pcm cm.PodContainerManager, cgroupP
 	for uid, val := range cgroupPods {
 		// if the pod is in the running set, its not a candidate for cleanup
 		if _, ok := possiblyRunningPods[uid]; ok {
+			continue
+		}
+		if _, ok := kl.PodMapping[uid]; ok {
+			klog.V(3).InfoS("cleanupOrphanedPodCgroups: pod is still remapping, skipping delete cgroup", "podUID", uid, "authod", "wyh")
 			continue
 		}
 

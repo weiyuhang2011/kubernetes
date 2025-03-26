@@ -220,6 +220,18 @@ func (dswp *desiredStateOfWorldPopulator) findAndAddNewPods() {
 // longer exist
 func (dswp *desiredStateOfWorldPopulator) findAndRemoveDeletedPods() {
 	for _, volumeToMount := range dswp.desiredStateOfWorld.GetVolumesToMount() {
+		// if namens, ok := volumeToMount.Pod.Annotations["pod.openeuler.org/handed-to"]; ok {
+		// 	klog.InfoS("volumemanager: This pod is handed to another pod", "current pod", volumeToMount.Pod.Name+volumeToMount.Pod.Namespace, "handed-to", namens)
+		// 	splitted := strings.Split(namens, "/")
+		// 	name, ns := splitted[0], splitted[1]
+		// 	handedToPod, exist := dswp.podManager.GetPodByName(name, ns)
+		// 	if exist {
+		// 		klog.InfoS("The handed-to pod exists, skip cleaning volume", "handed to pod", klog.KObj(handedToPod))
+		// 		continue
+		// 	} else {
+		// 		klog.InfoS("The handed-to pod not exists", "handed to pod", klog.KObj(handedToPod))
+		// 	}
+		// }
 		pod, podExists := dswp.podManager.GetPodByUID(volumeToMount.Pod.UID)
 		if podExists {
 
