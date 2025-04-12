@@ -85,6 +85,7 @@ type manager struct {
 	state state.State
 	// stateFileDirectory holds the directory where the state file for checkpoints is held.
 	stateFileDirectory string
+	PodRemapping       map[types.UID]types.UID
 }
 
 // PodManager is the subset of methods the manager needs to observe the actual state of the kubelet.
@@ -159,7 +160,7 @@ type Manager interface {
 const syncPeriod = 10 * time.Second
 
 // NewManager returns a functional Manager.
-func NewManager(kubeClient clientset.Interface, podManager PodManager, podDeletionSafety PodDeletionSafetyProvider, podStartupLatencyHelper PodStartupLatencyStateHelper, stateFileDirectory string) Manager {
+func NewManager(kubeClient clientset.Interface, podManager PodManager, podDeletionSafety PodDeletionSafetyProvider, podStartupLatencyHelper PodStartupLatencyStateHelper, stateFileDirectory string, podRemapping map[types.UID]types.UID) Manager {
 	return &manager{
 		kubeClient:              kubeClient,
 		podManager:              podManager,
@@ -169,6 +170,7 @@ func NewManager(kubeClient clientset.Interface, podManager PodManager, podDeleti
 		podDeletionSafety:       podDeletionSafety,
 		podStartupLatencyHelper: podStartupLatencyHelper,
 		stateFileDirectory:      stateFileDirectory,
+		PodRemapping:            podRemapping,
 	}
 }
 
@@ -931,6 +933,10 @@ func (m *manager) needsUpdate(uid types.UID, status versionedPodStatus) bool {
 func (m *manager) canBeDeleted(pod *v1.Pod, status v1.PodStatus, podIsFinished bool) bool {
 	if pod.DeletionTimestamp == nil || kubetypes.IsMirrorPod(pod) {
 		return false
+	}
+	// If the pod is required to be deleted, and it is remapped. we don't check whether it is cleanuped, we deleted it directly.
+	if _, ok := m.PodRemapping[pod.UID]; ok {
+		return true
 	}
 	// Delay deletion of pods until the phase is terminal, based on pod.Status
 	// which comes from pod manager.

@@ -183,7 +183,7 @@ func NewVolumeManager(
 	kubeletPodsDir string,
 	recorder record.EventRecorder,
 	keepTerminatedPodVolumes bool,
-	blockVolumePathHandler volumepathhandler.BlockVolumePathHandler) VolumeManager {
+	blockVolumePathHandler volumepathhandler.BlockVolumePathHandler, podRemapping map[k8stypes.UID]k8stypes.UID) VolumeManager {
 
 	seLinuxTranslator := util.NewSELinuxLabelTranslator()
 	vm := &volumeManager{
@@ -214,7 +214,7 @@ func NewVolumeManager(
 		keepTerminatedPodVolumes,
 		csiMigratedPluginManager,
 		intreeToCSITranslator,
-		volumePluginMgr)
+		volumePluginMgr, podRemapping)
 	vm.reconciler = reconciler.NewReconciler(
 		kubeClient,
 		controllerAttachDetachEnabled,

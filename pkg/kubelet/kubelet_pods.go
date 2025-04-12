@@ -2423,6 +2423,10 @@ func (kl *Kubelet) cleanupOrphanedPodCgroups(pcm cm.PodContainerManager, cgroupP
 		if _, ok := possiblyRunningPods[uid]; ok {
 			continue
 		}
+		if _, ok := kl.PodRemapping[uid]; ok {
+			klog.V(4).InfoS("cleanupOrphanedPodCgroups: pod is still remapping, skipping delete cgroup", "podUID", uid, "author", "wyh")
+			continue
+		}
 
 		// If volumes have not been unmounted/detached, do not delete the cgroup
 		// so any memory backed volumes don't have their charges propagated to the
