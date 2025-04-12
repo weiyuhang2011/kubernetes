@@ -580,7 +580,8 @@ func NewMainKubelet(kubeCfg *kubeletconfiginternal.KubeletConfiguration,
 	mirrorPodClient := kubepod.NewBasicMirrorClient(klet.kubeClient, string(nodeName), nodeLister)
 	klet.podManager = kubepod.NewBasicPodManager(mirrorPodClient, secretManager, configMapManager)
 
-	klet.statusManager = status.NewManager(klet.kubeClient, klet.podManager, klet)
+	klet.PodRemapping = make(map[types.UID]types.UID)
+	klet.statusManager = status.NewManager(klet.kubeClient, klet.podManager, klet, klet.PodRemapping)
 
 	klet.resourceAnalyzer = serverstats.NewResourceAnalyzer(klet, kubeCfg.VolumeStatsAggPeriod.Duration, kubeDeps.Recorder)
 
@@ -768,7 +769,7 @@ func NewMainKubelet(kubeCfg *kubeletconfiginternal.KubeletConfiguration,
 		klet.getPodsDir(),
 		kubeDeps.Recorder,
 		keepTerminatedPodVolumes,
-		volumepathhandler.NewBlockVolumePathHandler())
+		volumepathhandler.NewBlockVolumePathHandler(), klet.PodRemapping)
 
 	klet.backOff = flowcontrol.NewBackOff(backOffPeriod, MaxContainerBackOff)
 
@@ -1183,6 +1184,9 @@ type Kubelet struct {
 
 	// Manage user namespaces
 	usernsManager *usernsManager
+
+	// PodRemapping: orginal pod UID -> new pod UID
+	PodRemapping map[types.UID]types.UID
 }
 
 // ListPodStats is delegated to StatsProvider, which implements stats.Provider interface
@@ -1741,6 +1745,18 @@ func (kl *Kubelet) syncPod(ctx context.Context, updateType kubetypes.SyncPodType
 
 	// Call the container runtime's SyncPod callback
 	result := kl.containerRuntime.SyncPod(pod, podStatus, pullSecrets, kl.backOff)
+	if namens, ok := pod.Annotations["pod.openeuler.org/handed-from"]; ok {
+		splitted := strings.Split(namens, "/")
+		name, ns := splitted[0], splitted[1]
+		orgPod, exist := kl.podManager.GetPodByName(ns, name)
+		if exist {
+			kl.PodRemapping[orgPod.UID] = pod.UID
+			klog.V(4).InfoS("SyncPod: Pod handed from", "pod", klog.KObj(orgPod), "podUID", orgPod.UID, "to", klog.KObj(pod), "podUID", pod.UID, "author", "wyh")
+		} else {
+			klog.V(4).InfoS("SyncPod: orgiginal pod not exist", "orgPod", namens, "pod", klog.KObj(pod), "author", "wyh")
+
+		}
+	}
 	kl.reasonCache.Update(pod.UID, result)
 	if err := result.Error(); err != nil {
 		// Do not return error if the only failures were pods in backoff
@@ -1867,6 +1883,22 @@ func (kl *Kubelet) syncTerminatedPod(ctx context.Context, pod *v1.Pod, podStatus
 	// TODO: should we simply fold this into TerminatePod? that would give a single pod update
 	apiPodStatus := kl.generateAPIPodStatus(pod, podStatus)
 	kl.statusManager.SetPodStatus(pod, apiPodStatus)
+
+	if _, ok := pod.Annotations["pod.openeuler.org/handed-from"]; ok {
+		for orgUID, handedUID := range kl.PodRemapping {
+			if handedUID == pod.UID {
+				delete(kl.PodRemapping, orgUID)
+				klog.V(4).InfoS("syncTerminatedPod: delete orgPod UID entry", "orgPodUID", orgUID, "handedPodUID", handedUID, "author", "wyh")
+			}
+		}
+	}
+
+	if _, ok := kl.PodRemapping[pod.UID]; ok {
+		klog.V(4).InfoS("Remaped pod found, terminated pod in status manager", "pod", klog.KObj(pod), "podUID", pod.UID)
+		kl.statusManager.TerminatePod(pod)
+		klog.V(4).InfoS("Pod is terminated and will need no more status updates", "pod", klog.KObj(pod), "podUID", pod.UID)
+		return nil
+	}
 
 	// volumes are unmounted after the pod worker reports ShouldPodRuntimeBeRemoved (which is satisfied
 	// before syncTerminatedPod is invoked)

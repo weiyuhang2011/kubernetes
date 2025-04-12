@@ -99,7 +99,7 @@ func NewDesiredStateOfWorldPopulator(
 	keepTerminatedPodVolumes bool,
 	csiMigratedPluginManager csimigration.PluginManager,
 	intreeToCSITranslator csimigration.InTreeToCSITranslator,
-	volumePluginMgr *volume.VolumePluginMgr) DesiredStateOfWorldPopulator {
+	volumePluginMgr *volume.VolumePluginMgr, podRemapping map[types.UID]types.UID) DesiredStateOfWorldPopulator {
 	return &desiredStateOfWorldPopulator{
 		kubeClient:                kubeClient,
 		loopSleepDuration:         loopSleepDuration,
@@ -117,6 +117,7 @@ func NewDesiredStateOfWorldPopulator(
 		csiMigratedPluginManager: csiMigratedPluginManager,
 		intreeToCSITranslator:    intreeToCSITranslator,
 		volumePluginMgr:          volumePluginMgr,
+		PodRemapping:             podRemapping,
 	}
 }
 
@@ -137,6 +138,9 @@ type desiredStateOfWorldPopulator struct {
 	csiMigratedPluginManager  csimigration.PluginManager
 	intreeToCSITranslator     csimigration.InTreeToCSITranslator
 	volumePluginMgr           *volume.VolumePluginMgr
+
+	// PodMapping: orginal pod UID -> new pod UID
+	PodRemapping map[types.UID]types.UID
 }
 
 type processedPods struct {
@@ -243,6 +247,12 @@ func (dswp *desiredStateOfWorldPopulator) findAndRemoveDeletedPods() {
 			if dswp.keepTerminatedPodVolumes {
 				continue
 			}
+		}
+		if _, ok := dswp.PodRemapping[volumeToMount.Pod.UID]; ok {
+			// If the pod has been remapped, we will not remove it from desired state
+			// as it is still in use by the new pod.
+			klog.V(4).InfoS("Pod has been remapped, skipping removal from desired state", "podUID", volumeToMount.Pod.UID)
+			continue
 		}
 
 		// Once a pod has been deleted from kubelet pod manager, do not delete

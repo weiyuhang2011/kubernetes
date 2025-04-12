@@ -186,6 +186,10 @@ func (kl *Kubelet) cleanupOrphanedPodDirs(pods []*v1.Pod, runningPods []*kubecon
 		if allPods.Has(string(uid)) {
 			continue
 		}
+		if _, ok := kl.PodRemapping[uid]; ok {
+			klog.V(4).InfoS("Remapped pod found in cleanupOrphanedPodDirs, skip cleanup", "podUID", uid, "author", "wyh")
+			continue
+		}
 		// If volumes have not been unmounted/detached, do not delete directory.
 		// Doing so may result in corruption of data.
 		// TODO: getMountedVolumePathListFromDisk() call may be redundant with

@@ -71,6 +71,7 @@ type manager struct {
 	// apiStatusVersions must only be accessed from the sync thread.
 	apiStatusVersions map[kubetypes.MirrorPodUID]uint64
 	podDeletionSafety PodDeletionSafetyProvider
+	PodRemapping      map[types.UID]types.UID
 }
 
 // PodStatusProvider knows how to provide status for a pod. It's intended to be used by other components
@@ -120,7 +121,7 @@ type Manager interface {
 const syncPeriod = 10 * time.Second
 
 // NewManager returns a functional Manager.
-func NewManager(kubeClient clientset.Interface, podManager kubepod.Manager, podDeletionSafety PodDeletionSafetyProvider) Manager {
+func NewManager(kubeClient clientset.Interface, podManager kubepod.Manager, podDeletionSafety PodDeletionSafetyProvider, podRemapping map[types.UID]types.UID) Manager {
 	return &manager{
 		kubeClient:        kubeClient,
 		podManager:        podManager,
@@ -128,6 +129,7 @@ func NewManager(kubeClient clientset.Interface, podManager kubepod.Manager, podD
 		podStatusChannel:  make(chan podStatusSyncRequest, 1000), // Buffer up to 1000 statuses
 		apiStatusVersions: make(map[kubetypes.MirrorPodUID]uint64),
 		podDeletionSafety: podDeletionSafety,
+		PodRemapping:      podRemapping,
 	}
 }
 
@@ -735,6 +737,10 @@ func (m *manager) needsUpdate(uid types.UID, status versionedPodStatus) bool {
 func (m *manager) canBeDeleted(pod *v1.Pod, status v1.PodStatus) bool {
 	if pod.DeletionTimestamp == nil || kubetypes.IsMirrorPod(pod) {
 		return false
+	}
+	// If the pod is required to be deleted, and it is remapped. we don't check whether it is cleanuped, we deleted it directly.
+	if _, ok := m.PodRemapping[pod.UID]; ok {
+		return true
 	}
 	return m.podDeletionSafety.PodResourcesAreReclaimed(pod, status)
 }
