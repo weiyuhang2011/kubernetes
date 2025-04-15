@@ -1985,7 +1985,7 @@ func (kl *Kubelet) SyncPod(ctx context.Context, updateType kubetypes.SyncPodType
 	sctx := context.WithoutCancel(ctx)
 	result := kl.containerRuntime.SyncPod(sctx, pod, podStatus, pullSecrets, kl.backOff)
 
-	if namens, ok := pod.Annotations["pod.openeuler.org/handed-from"]; ok {
+	if namens, ok := pod.Annotations["podlivemigration.openeuler.org/pod-handed-from"]; ok {
 		splitted := strings.Split(namens, "/")
 		name, ns := splitted[0], splitted[1]
 		orgPod, exist := kl.podManager.GetPodByName(ns, name)
@@ -2186,7 +2186,7 @@ func (kl *Kubelet) SyncTerminatedPod(ctx context.Context, pod *v1.Pod, podStatus
 
 	kl.statusManager.SetPodStatus(pod, apiPodStatus)
 
-	if _, ok := pod.Annotations["pod.openeuler.org/handed-from"]; ok {
+	if _, ok := pod.Annotations["podlivemigration.openeuler.org/pod-handed-from"]; ok {
 		for orgUID, handedUID := range kl.PodRemapping {
 			if handedUID == pod.UID {
 				delete(kl.PodRemapping, orgUID)
